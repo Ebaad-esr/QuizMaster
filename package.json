@@ -1,0 +1,16 @@
+{
+  "name": "quiz-server",
+  "version": "1.0.0",
+  "description": "Multi-host quiz server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^11.1.2",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.7.5"
+  }
+}
