@@ -31,18 +31,22 @@ function showPage(pageId) {
     document.getElementById(pageId).classList.remove("hide");
 }
 
+// ** UPDATED JOIN FORM LISTENER **
 document.getElementById("join-form").addEventListener("submit", e => {
     e.preventDefault();
     const name = document.getElementById("name-input").value.trim();
+    const joinCode = document.getElementById("joincode-input").value.trim().toUpperCase();
     const branch = document.getElementById("branch-input").value.trim();
     const year = document.getElementById("year-input").value.trim();
-    if (name) {
-        socket.emit("join", { name, branch, year });
+    
+    if (name && joinCode) {
+        socket.emit("join", { name, branch, year, joinCode });
     }
 });
 
 ui.nextQuestionBtn.addEventListener("click", () => socket.emit("requestNextQuestion"));
 
+// ** NOTE: The 'joined' event is no longer used by the server **
 socket.on("joined", ({ name }) => {
     ui.welcomeMessage.textContent = `Welcome, ${name}!`;
     showPage("waiting-page");
@@ -51,8 +55,7 @@ socket.on("joined", ({ name }) => {
 socket.on("quizState", state => {
     ui.quizTitle.textContent = state.quizName || "QuizMaster Pro";
     if (state.status === "active") {
-        ui.joinError.textContent = "Quiz is already in progress.";
-        ui.joinError.classList.remove("hide");
+        // This message is no longer accurate, but we'll leave it
     }
 });
 
@@ -135,8 +138,9 @@ socket.on("quizFinished", ({ score }) => {
     showPage("finished-page");
 });
 
+// ** UPDATED - TIMER NO LONGER CLEARED **
 function submitAnswer(optionIndex) {
-    // clearInterval(timerInterval); // <-- This line is now removed
+    // clearInterval(timerInterval); // <-- This line is removed
     ui.optionsContainer.querySelectorAll("button").forEach(btn => btn.disabled = true);
     socket.emit("submitAnswer", { optionIndex });
 }
