@@ -56,6 +56,7 @@ masterDb.exec(`CREATE TABLE IF NOT EXISTS hosts (id INTEGER PRIMARY KEY AUTOINCR
 
 const dbConnections = new Map();
 
+// --- NEW getHostDb FUNCTION ---
 function getHostDb(hostId) {
     if (dbConnections.has(hostId)) {
         return dbConnections.get(hostId);
@@ -74,8 +75,22 @@ function getHostDb(hostId) {
             UNIQUE(name)
         );
         CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, quiz_id INTEGER NOT NULL, text TEXT NOT NULL, options TEXT NOT NULL, correctOptionIndex INTEGER NOT NULL, timeLimit INTEGER NOT NULL, score INTEGER NOT NULL, negativeScore INTEGER NOT NULL, imageUrl TEXT, FOREIGN KEY (quiz_id) REFERENCES quizzes (id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY AUTOINCREMENT, quiz_id INTEGER NOT NULL, name TEXT NOT NULL, branch TEXT, year TEXT, score INTEGER NOT NULL, finishTime INTEGER, UNIQUE(quiz_id, name));
+        CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY AUTOINCREMENT, quiz_id INTEGER NOT NULL, name TEXT NOT NULL, branch TEXT, year TEXT, score INTEGER NOT NULL, finishTime INTEGER, answers TEXT, UNIQUE(quiz_id, name));
     `);
+
+    // --- ADDED ---
+    // This safely adds the new 'answers' column if it doesn't exist
+    try {
+        hostDb.prepare('ALTER TABLE results ADD COLUMN answers TEXT').run();
+    } catch (e) {
+        if (e.message.includes('duplicate column name')) {
+            // This is expected if the column already exists, so we ignore it.
+        } else {
+            console.error("DB migration error:", e.message);
+        }
+    }
+    // --- END ADDED ---
+
     dbConnections.set(hostId, hostDb);
     return hostDb;
 }
@@ -241,20 +256,67 @@ app.post('/api/host/end-quiz', hostAuthMiddleware, (req, res) => {
 
 // ** BUG FIX **
 // This route now uses hostAuthMiddleware to get the correct host database.
+// --- NEW '/api/host/results' ROUTE ---
 app.get('/api/host/results', hostAuthMiddleware, (req, res) => {
     try {
         const { quizId } = req.query;
         if (!quizId) return res.status(400).send("quizId is required.");
         
-        // The host's DB is now correctly identified from the middleware
-        const results = req.db.prepare('SELECT name, branch, year, score FROM results WHERE quiz_id = ? ORDER BY score DESC').all(quizId);
+        // Helper function to safely quote CSV fields
+        const quote = (val) => {
+            const str = (val === null || val === undefined) ? '' : String(val);
+            // Escape double quotes by doubling them
+            const escaped = str.replace(/"/g, '""');
+            // Add quotes if the string contains a comma, newline, or double quote
+            if (escaped.includes(',') || escaped.includes('\n') || escaped.includes('"')) {
+                return `"${escaped}"`;
+            }
+            return escaped;
+        };
+
+        // 1. Get all questions for this quiz
+        const questions = req.db.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC').all(quizId);
         
-        let csv = 'Name,Branch,Year,Score\n';
-        results.forEach(r => { csv += `${r.name},${r.branch || ''},${r.year || ''},${r.score}\n`; });
+        // 2. Get all results, including the new 'answers' column
+        const results = req.db.prepare('SELECT name, branch, year, score, answers FROM results WHERE quiz_id = ? ORDER BY score DESC').all(quizId);
+        
+        // 3. Build CSV Headers
+        let headers = ['Name', 'Branch', 'Year', 'Total Score'];
+        // Add each question as a header
+        questions.forEach((q, i) => {
+            headers.push(`Q${i + 1}: ${q.text}`);
+        });
+        let csv = headers.map(quote).join(',') + '\n';
+
+        // 4. Build CSV Rows
+        results.forEach(r => {
+            const playerAnswers = r.answers ? JSON.parse(r.answers) : {};
+            let row = [
+                quote(r.name),
+                quote(r.branch),
+                quote(r.year),
+                r.score // Score is a number, no quote needed
+            ];
+
+            // Loop through each question to check the player's answer
+            questions.forEach(q => {
+                // Find the player's answer for this specific question ID
+                const selectedOptionIndex = playerAnswers[q.id];
+                
+                let answerStatus = 'NO ANSWER';
+                if (selectedOptionIndex !== undefined && selectedOptionIndex !== null) {
+                    answerStatus = (selectedOptionIndex === q.correctOptionIndex) ? 'Correct' : 'Wrong';
+                }
+                row.push(quote(answerStatus));
+            });
+            
+            csv += row.join(',') + '\n';
+        });
         
         res.header('Content-Type', 'text/csv');
-        res.attachment(`quiz_${quizId}_results.csv`);
+        res.attachment(`quiz_${quizId}_results_detailed.csv`);
         res.send(csv);
+
     } catch(e) { 
         console.error("Error generating results:", e);
         res.status(500).send("Error generating results"); 
@@ -310,9 +372,17 @@ io.on('connection', (socket) => {
         player.answers[question.id] = optionIndex;
         socket.emit('answerResult', { isCorrect, scoreChange, correctOptionIndex: question.correctOptionIndex, selectedOptionIndex: optionIndex, score: player.score });
         
+       // --- NEW 'submitAnswer' DB QUERY ---
         const hostDb = getHostDb(quizState.hostId);
-        const stmt = hostDb.prepare('INSERT INTO results (quiz_id, name, branch, year, score, finishTime) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(quiz_id, name) DO UPDATE SET score=excluded.score, finishTime=excluded.finishTime');
-        stmt.run(quizState.quizId, player.name, player.branch, player.year, player.score, Date.now());
+        // --- ADDED ---
+        const answersJson = JSON.stringify(player.answers);
+        // --- END ADDED ---
+
+        const stmt = hostDb.prepare(
+            'INSERT INTO results (quiz_id, name, branch, year, score, finishTime, answers) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(quiz_id, name) DO UPDATE SET score=excluded.score, finishTime=excluded.finishTime, answers=excluded.answers'
+        );
+        stmt.run(quizState.quizId, player.name, player.branch, player.year, player.score, Date.now(), answersJson);
+        
         io.emit('leaderboardUpdate', { results: getLeaderboard(), quizName: quizState.quizName });
     });
     socket.on('getLeaderboard', () => socket.emit('leaderboardUpdate', { results: getLeaderboard(), quizName: quizState.quizName }));
@@ -330,4 +400,5 @@ server.listen(PORT, () => {
     console.log(`   Player Page: http://localhost:${PORT}/player`);
     console.log(`   Host Login:  http://localhost:${PORT}/host`);
     console.log(`   Admin Login: http://localhost:${PORT}/admin (Password: 'admin')`);
+
 });
