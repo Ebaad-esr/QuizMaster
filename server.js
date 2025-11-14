@@ -256,20 +256,26 @@ app.post('/api/host/start-quiz', hostAuthMiddleware, (req, res) => {
     
     const { quizId } = req.body;
     
+    // --- ** FIX: CHECK FOR QUESTIONS FIRST ** ---
+    const questions = req.db.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC').all(quizId);
+    if (questions.length === 0) {
+        return res.json({ success: false, message: 'This quiz has no questions. Please add questions first.'});
+    }
+    // --- ** END FIX ** ---
+
     // Set this quiz's status to 'waiting' (in lobby)
     req.db.prepare("UPDATE quizzes SET status = 'waiting' WHERE id = ?").run(quizId);
     
     const quiz = req.db.prepare('SELECT * FROM quizzes WHERE id = ?').get(quizId);
     if (!quiz) return res.json({ success: false, message: 'Quiz not found.' });
 
-    quizState.questions = req.db.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC').all(quizId);
-    if (quizState.questions.length === 0) return res.json({ success: false, message: 'This quiz has no questions.'});
+    quizState.questions = questions; // Use the questions we already fetched
     
     quizState.status = 'waiting'; // Global state is now 'waiting'
     quizState.hostId = req.hostId;
     quizState.quizId = quizId;
     quizState.quizName = quiz.name;
-    quizState.joinCode = quiz.join_code;
+    quizState.joinCode = quiz.join_code; // Set in-memory code to match DB code
     req.db.prepare('DELETE FROM results WHERE quiz_id = ?').run(quizId);
     
     players.clear();
@@ -277,7 +283,7 @@ app.post('/api/host/start-quiz', hostAuthMiddleware, (req, res) => {
     res.json({ success: true });
 });
 
-// ** NEW "Launch Quiz" ROUTE **
+// "Launch Quiz"
 app.post('/api/host/launch-quiz', hostAuthMiddleware, (req, res) => {
     if (quizState.status !== 'waiting' || quizState.hostId !== req.hostId) {
         return res.json({ success: false, message: 'Quiz is not in a waiting lobby.'});
@@ -366,7 +372,7 @@ function endQuiz() {
         players.forEach((player, socketId) => io.to(socketId).emit('quizFinished', { score: player.score }));
     }
     
-    quizState.status = 'finished'; // Use 'finished' to block any lingering joins
+    quizState.status = 'finished';
     quizState.quizId = null;
     quizState.hostId = null;
     quizState.joinCode = null;
@@ -376,26 +382,20 @@ io.on('connection', (socket) => {
     socket.emit('quizState', { status: quizState.status, quizName: quizState.quizName });
     io.emit('playerCount', players.size);
     
-    // ** UPDATED JOIN LOGIC (LOBBY MODEL) **
     socket.on('join', (playerData) => {
-        // 1. Check if a quiz is in the 'waiting' lobby state
         if (quizState.status !== 'waiting') {
             return socket.emit('error', { message: 'The quiz is not ready or has already started.' });
         }
-        // 2. Check the join code
         if (playerData.joinCode !== quizState.joinCode) {
             return socket.emit('error', { message: 'Invalid Join Code.' });
         }
-        // 3. Check if player name is already taken
         if (Array.from(players.values()).some(p => p.name.toLowerCase() === playerData.name.toLowerCase())) {
             return socket.emit('error', { message: 'This name is already taken for this quiz.' });
         }
         
-        // Add player to lobby
         players.set(socket.id, { ...playerData, score: 0, answers: {}, questionIndex: -1 });
         io.emit('playerCount', players.size);
 
-        // Send player to the waiting room
         socket.emit('joined', { name: playerData.name });
     });
 
