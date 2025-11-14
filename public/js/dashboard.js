@@ -7,9 +7,10 @@ const ui = {
     backToListBtn: document.getElementById("back-to-list-btn"),
     statusDisplay: document.getElementById("status-display"),
     playersDisplay: document.getElementById("players-display"),
-    joinCodeDisplay: document.getElementById("join-code-display"), // <-- ADDED
+    joinCodeDisplay: document.getElementById("join-code-display"),
     questionsCount: document.getElementById("questions-count-display"),
     startBtn: document.getElementById("start-btn"),
+    launchBtn: document.getElementById("launch-btn"), // <-- ADDED
     endBtn: document.getElementById("end-btn"),
     resultsBtn: document.getElementById("results-btn"),
     questionsTable: document.getElementById("questions-table"),
@@ -34,7 +35,7 @@ async function api(endpoint, body) {
     }
     const response = await fetch(`/api/host/${endpoint}`, {
         method: "POST",
-        headers: headers, // <-- This is the fix
+        headers: headers, 
         body: JSON.stringify(body)
     });
     return await response.json();
@@ -76,14 +77,24 @@ async function refreshQuizDetail() {
     if (!hostToken || currentQuizId === null) return;
     const result = await api("quiz-details", { quizId: currentQuizId });
     if (result.success) {
-        const { status, playerCount, questions, joinCode } // <-- ADDED joinCode
- = result.details;
-        ui.statusDisplay.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        const { status, playerCount, questions, joinCode } = result.details;
+        
+        let statusText = status.charAt(0).toUpperCase() + status.slice(1);
+        if (status === 'waiting') {
+            statusText = 'Waiting (In Lobby)';
+        }
+        
+        ui.statusDisplay.textContent = statusText;
         ui.playersDisplay.textContent = playerCount;
         ui.questionsCount.textContent = questions.length;
-        ui.joinCodeDisplay.textContent = joinCode || "-"; // <-- ADDED
-        ui.startBtn.disabled = status === "active";
-        ui.endBtn.disabled = status !== "active";
+        ui.joinCodeDisplay.textContent = joinCode || "-";
+        
+        // ** NEW BUTTON LOGIC **
+        // status can be 'finished', 'waiting', 'active'
+        ui.startBtn.disabled = (status === 'waiting' || status === 'active'); // Can only prepare if 'finished'
+        ui.launchBtn.disabled = (status !== 'waiting'); // Can only launch if 'waiting' (in lobby)
+        ui.endBtn.disabled = (status === 'finished'); // Can end if 'waiting' or 'active'
+
         ui.questionsTable.innerHTML = questions.map(q => `
             <tr class="border-b">
                 <td class="p-3">#${q.id}</td>
@@ -134,11 +145,19 @@ ui.questionForm.addEventListener("submit", async e => {
     }
 });
 
+// "Prepare Quiz"
 ui.startBtn.addEventListener("click", async () => {
     await api("start-quiz", { quizId: currentQuizId });
     refreshQuizDetail();
 });
 
+// "Launch Quiz" (NEW)
+ui.launchBtn.addEventListener("click", async () => {
+    await api("launch-quiz", { quizId: currentQuizId });
+    refreshQuizDetail();
+});
+
+// "End Quiz"
 ui.endBtn.addEventListener("click", async () => {
     await api("end-quiz");
     refreshQuizDetail();
