@@ -1,23 +1,23 @@
 /*
 ================================================================================
-  Unified Quiz Server - All-in-One LOCAL Node.js File
+  Unified Quiz Server - All-in-One LOCAL Node.js File
 ================================================================================
-  MODEL: Self-Hosted with Multi-File SQLite Database & Multi-Host System
+  MODEL: Self-Hosted with Multi-File SQLite Database & Multi-Host System
 
-  --- HOW TO RUN ---
-  1. Create a folder and place all the project files inside.
-  2. Open your terminal in that folder.
-  3. Run this command once to install all dependencies:
-     npm install
-  4. The server will automatically create `public/uploads` and `databases` folders.
-  5. Start the server by running:
-     npm start
-  6. Open your browser to the following pages:
-     - Home Page: http://localhost:3000
-     - Player Page: http://localhost:3000/player
-     - Host Login: http://localhost:3000/host
-     - Super Admin Login: http://localhost:3000/admin (Password: 'admin')
-  
+  --- HOW TO RUN ---
+  1. Create a folder and place all the project files inside.
+  2. Open your terminal in that folder.
+  3. Run this command once to install all dependencies:
+     npm install
+  4. The server will automatically create `public/uploads` and `databases` folders.
+  5. Start the server by running:
+     npm start
+  6. Open your browser to the following pages:
+     - Home Page: http://localhost:3000
+     - Player Page: http://localhost:3000/player
+     - Host Login: http://localhost:3000/host
+     - Super Admin Login: http://localhost:3000/admin (Password: 'admin')
+ 
 ================================================================================
 */
 
@@ -36,12 +36,28 @@ const ADMIN_PASSWORD = '3gbup38id9'; // Super Admin password
 const SALT_ROUNDS = 10;
 
 // --- DIRECTORY SETUP ---
+// Check if we are on Render. 'RENDER_DISK_MOUNT_PATH' is an environment variable Render provides.
+const isRender = process.env.RENDER_DISK_MOUNT_PATH;
+
+// If we are on Render, use the persistent disk path.
+// Otherwise, use the local project folders.
+const dataPath = isRender ? process.env.RENDER_DISK_MOUNT_PATH : __dirname;
+
 const publicDir = path.join(__dirname, 'public');
-const uploadsDir = path.join(publicDir, 'uploads');
-const dbDir = path.join(__dirname, 'databases');
-[publicDir, uploadsDir, dbDir].forEach(dir => {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
+const uploadsDir = path.join(dataPath, 'uploads'); // Use dataPath
+const dbDir = path.join(dataPath, 'databases');   // Use dataPath
+
+// We only need to create publicDir locally.
+// On Render, the disk is already mounted, and we create the subfolders.
+if (isRender) {
+    [uploadsDir, dbDir].forEach(dir => {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    });
+} else {
+    [publicDir, uploadsDir, dbDir].forEach(dir => {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    });
+}
 
 // --- FILE UPLOAD SETUP ---
 const storage = multer.diskStorage({
@@ -56,7 +72,10 @@ masterDb.exec(`CREATE TABLE IF NOT EXISTS hosts (id INTEGER PRIMARY KEY AUTOINCR
 
 const dbConnections = new Map();
 
-// --- NEW getHostDb FUNCTION ---
+function generateJoinCode(length = 6) {
+    return Math.random().toString(36).substring(2, 2 + length).toUpperCase();
+}
+
 function getHostDb(hostId) {
     if (dbConnections.has(hostId)) {
         return dbConnections.get(hostId);
@@ -72,31 +91,38 @@ function getHostDb(hostId) {
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             name TEXT NOT NULL, 
             status TEXT NOT NULL DEFAULT 'waiting', -- 'waiting', 'active', 'finished'
+            join_code TEXT,
             UNIQUE(name)
         );
         CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, quiz_id INTEGER NOT NULL, text TEXT NOT NULL, options TEXT NOT NULL, correctOptionIndex INTEGER NOT NULL, timeLimit INTEGER NOT NULL, score INTEGER NOT NULL, negativeScore INTEGER NOT NULL, imageUrl TEXT, FOREIGN KEY (quiz_id) REFERENCES quizzes (id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS results (id INTEGER PRIMARY KEY AUTOINCREMENT, quiz_id INTEGER NOT NULL, name TEXT NOT NULL, branch TEXT, year TEXT, score INTEGER NOT NULL, finishTime INTEGER, answers TEXT, UNIQUE(quiz_id, name));
     `);
 
-    // --- ADDED ---
-    // This safely adds the new 'answers' column if it doesn't exist
+    // --- MIGRATIONS ---
+    // Safely adds the new 'answers' column to 'results' if it doesn't exist
     try {
         hostDb.prepare('ALTER TABLE results ADD COLUMN answers TEXT').run();
     } catch (e) {
-        if (e.message.includes('duplicate column name')) {
-            // This is expected if the column already exists, so we ignore it.
-        } else {
-            console.error("DB migration error:", e.message);
+        if (!e.message.includes('duplicate column name')) {
+            console.error("DB migration error (results.answers):", e.message);
         }
     }
-    // --- END ADDED ---
+    // Safely adds the new 'join_code' column to 'quizzes' if it doesn't exist
+    try {
+        hostDb.prepare('ALTER TABLE quizzes ADD COLUMN join_code TEXT').run();
+    } catch (e) {
+        if (!e.message.includes('duplicate column name')) {
+            console.error("DB migration error (quizzes.join_code):", e.message);
+        }
+    }
+    // --- END MIGRATIONS ---
 
     dbConnections.set(hostId, hostDb);
     return hostDb;
 }
 
 // --- IN-MEMORY STATE ---
-let quizState = { status: 'waiting', hostId: null, quizId: null, quizName: '', questions: [] };
+let quizState = { status: 'waiting', hostId: null, quizId: null, quizName: '', questions: [], joinCode: null };
 const players = new Map();
 
 // --- SERVER SETUP ---
@@ -192,13 +218,13 @@ app.post('/api/host/delete-quiz', hostAuthMiddleware, (req, res) => {
 });
 app.post('/api/host/quiz-details', hostAuthMiddleware, (req, res) => {
     const { quizId } = req.body;
-    const quiz = req.db.prepare('SELECT status FROM quizzes WHERE id = ?').get(quizId);
+    const quiz = req.db.prepare('SELECT status, join_code FROM quizzes WHERE id = ?').get(quizId);
     if (!quiz) return res.status(404).json({ success: false, message: 'Quiz not found'});
 
     const questions = req.db.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC').all(quizId);
     const playerCount = (quizState.quizId === parseInt(quizId) && quizState.hostId === req.hostId) ? players.size : 0;
     
-    res.json({ success: true, details: { status: quiz.status, playerCount, questions }});
+    res.json({ success: true, details: { status: quiz.status, joinCode: quiz.join_code, playerCount, questions }});
 });
 app.post('/api/host/add-question', hostAuthMiddleware, upload.single('questionImage'), (req, res) => {
     try {
@@ -226,8 +252,9 @@ app.post('/api/host/start-quiz', hostAuthMiddleware, (req, res) => {
     const { quizId } = req.body;
     
     // Ensure this host has no other quizzes marked as active
-    req.db.prepare("UPDATE quizzes SET status = 'waiting'").run();
-    req.db.prepare("UPDATE quizzes SET status = 'active' WHERE id = ?").run(quizId);
+    req.db.prepare("UPDATE quizzes SET status = 'waiting', join_code = NULL").run();
+    const joinCode = generateJoinCode();
+    req.db.prepare("UPDATE quizzes SET status = 'active', join_code = ? WHERE id = ?").run(joinCode, quizId);
     
     const quiz = req.db.prepare('SELECT * FROM quizzes WHERE id = ?').get(quizId);
     if (!quiz) return res.json({ success: false, message: 'Quiz not found.' });
@@ -239,6 +266,7 @@ app.post('/api/host/start-quiz', hostAuthMiddleware, (req, res) => {
     quizState.hostId = req.hostId;
     quizState.quizId = quizId;
     quizState.quizName = quiz.name;
+    quizState.joinCode = joinCode;
     req.db.prepare('DELETE FROM results WHERE quiz_id = ?').run(quizId);
     
     players.forEach(p => { p.score = 0; p.answers = {}; p.questionIndex = -1; });
@@ -254,9 +282,7 @@ app.post('/api/host/end-quiz', hostAuthMiddleware, (req, res) => {
     res.json({ success: true });
 });
 
-// ** BUG FIX **
-// This route now uses hostAuthMiddleware to get the correct host database.
-// --- NEW '/api/host/results' ROUTE ---
+// ** UPDATED DETAILED RESULTS ROUTE **
 app.get('/api/host/results', hostAuthMiddleware, (req, res) => {
     try {
         const { quizId } = req.query;
@@ -328,7 +354,7 @@ function endQuiz() {
     if (quizState.status !== 'active') return;
 
     const hostDb = getHostDb(quizState.hostId);
-    hostDb.prepare("UPDATE quizzes SET status = 'waiting' WHERE id = ?").run(quizState.quizId);
+    hostDb.prepare("UPDATE quizzes SET status = 'waiting', join_code = NULL WHERE id = ?").run(quizState.quizId);
 
     quizState.status = 'finished'; // temporary state for players
     players.forEach((player, socketId) => io.to(socketId).emit('quizFinished', { score: player.score }));
@@ -336,16 +362,35 @@ function endQuiz() {
     quizState.status = 'waiting';
     quizState.quizId = null;
     quizState.hostId = null;
+    quizState.joinCode = null;
 }
 io.on('connection', (socket) => {
     socket.emit('quizState', { status: quizState.status, quizName: quizState.quizName });
     io.emit('playerCount', players.size);
+    
+    // ** UPDATED JOIN LOGIC **
     socket.on('join', (playerData) => {
-        if (quizState.status === 'active') return socket.emit('error', { message: 'Quiz is already in progress.' });
+        // 1. Check if a quiz is active
+        if (quizState.status !== 'active') {
+            return socket.emit('error', { message: 'No quiz is active. Please wait for the host.' });
+        }
+        // 2. Check the join code
+        if (playerData.joinCode !== quizState.joinCode) {
+            return socket.emit('error', { message: 'Invalid Join Code.' });
+        }
+        // 3. Check if player name is already taken
+        if (Array.from(players.values()).some(p => p.name.toLowerCase() === playerData.name.toLowerCase())) {
+            return socket.emit('error', { message: 'This name is already taken for this quiz.' });
+        }
+        
+        // Add player
         players.set(socket.id, { ...playerData, score: 0, answers: {}, questionIndex: -1 });
         io.emit('playerCount', players.size);
-        socket.emit('joined', { name: playerData.name });
+
+        // Immediately send the player into the quiz
+        socket.emit('quizStarted', { quizName: quizState.quizName });
     });
+
     socket.on('requestNextQuestion', () => {
         const player = players.get(socket.id);
         if (!player || quizState.status !== 'active') return;
@@ -357,6 +402,7 @@ io.on('connection', (socket) => {
             socket.emit('question', { question, index: player.questionIndex });
         }
     });
+
     socket.on('submitAnswer', ({ optionIndex }) => {
         const player = players.get(socket.id);
         if (!player || !quizState.questions[player.questionIndex]) return;
@@ -372,11 +418,9 @@ io.on('connection', (socket) => {
         player.answers[question.id] = optionIndex;
         socket.emit('answerResult', { isCorrect, scoreChange, correctOptionIndex: question.correctOptionIndex, selectedOptionIndex: optionIndex, score: player.score });
         
-       // --- NEW 'submitAnswer' DB QUERY ---
+        // ** UPDATED DB QUERY (with 'answers' column) **
         const hostDb = getHostDb(quizState.hostId);
-        // --- ADDED ---
         const answersJson = JSON.stringify(player.answers);
-        // --- END ADDED ---
 
         const stmt = hostDb.prepare(
             'INSERT INTO results (quiz_id, name, branch, year, score, finishTime, answers) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(quiz_id, name) DO UPDATE SET score=excluded.score, finishTime=excluded.finishTime, answers=excluded.answers'
@@ -400,5 +444,4 @@ server.listen(PORT, () => {
     console.log(`   Player Page: http://localhost:${PORT}/player`);
     console.log(`   Host Login:  http://localhost:${PORT}/host`);
     console.log(`   Admin Login: http://localhost:${PORT}/admin (Password: 'admin')`);
-
 });
