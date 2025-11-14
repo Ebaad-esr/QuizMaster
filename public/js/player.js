@@ -17,7 +17,7 @@ const ui = {
     feedbackContainer: document.getElementById("feedback-container"),
     feedbackText: document.getElementById("feedback-text"),
     feedbackScore: document.getElementById("feedback-score"),
-    nextQuestionBtn: document.getElementById("next-question-btn"),
+    // nextQuestionBtn has been removed
     finalScore: document.getElementById("final-score"),
     playerCount: document.getElementById("player-count-display")
 };
@@ -43,9 +43,8 @@ document.getElementById("join-form").addEventListener("submit", e => {
     }
 });
 
-ui.nextQuestionBtn.addEventListener("click", () => socket.emit("requestNextQuestion"));
+// "Next Question" button click listener has been removed
 
-// This event is now used again for the lobby
 socket.on("joined", ({ name }) => {
     ui.welcomeMessage.textContent = `Welcome, ${name}!`;
     showPage("waiting-page");
@@ -64,7 +63,6 @@ socket.on("error", ({ message }) => {
     ui.joinError.classList.remove("hide");
 });
 
-// This event now fires when the host clicks "Launch Quiz"
 socket.on("quizStarted", state => {
     ui.quizTitle.textContent = state.quizName;
     showPage("quiz-page");
@@ -73,7 +71,7 @@ socket.on("quizStarted", state => {
 
 socket.on("question", ({ question, index }) => {
     ui.feedbackContainer.classList.add("hide");
-    ui.nextQuestionBtn.classList.add("hide");
+    // nextQuestionBtn logic removed
     ui.questionText.textContent = `${index + 1}. ${question.text}`;
     ui.questionScoreDisplay.textContent = `Points: ${question.score} / -${question.negativeScore}`;
 
@@ -97,12 +95,27 @@ socket.on("question", ({ question, index }) => {
     clearInterval(timerInterval);
     let timeLeft = question.timeLimit;
     ui.timerDisplay.textContent = `${timeLeft}s`;
+    
+    // ** UPDATED TIMER LOGIC **
     timerInterval = setInterval(() => {
         timeLeft--;
         ui.timerDisplay.textContent = `${timeLeft}s`;
         if (timeLeft <= 0) {
             clearInterval(timerInterval);
-            submitAnswer(null);
+            
+            // Check if an answer was already submitted
+            const isAnswered = ui.optionsContainer.querySelector('button:disabled');
+            
+            // If not answered, submit 'null' (for timeout)
+            if (!isAnswered) {
+                submitAnswer(null);
+            }
+            
+            // Automatically request the next question after a short delay
+            // to allow the server to process the answer (if any).
+            setTimeout(() => {
+                socket.emit("requestNextQuestion");
+            }, 1200); // 1.2 second delay
         }
     }, 1000);
 });
@@ -110,7 +123,7 @@ socket.on("question", ({ question, index }) => {
 socket.on("answerResult", ({ isCorrect, scoreChange, correctOptionIndex, selectedOptionIndex, score }) => {
     ui.scoreDisplay.textContent = score;
     ui.feedbackContainer.classList.remove("hide");
-    ui.nextQuestionBtn.classList.remove("hide");
+    // nextQuestionBtn logic removed
 
     ui.feedbackText.textContent = isCorrect ? "Correct!" : "Wrong!";
     ui.feedbackText.className = isCorrect ? "text-2xl font-bold text-green-400" : "text-2xl font-bold text-red-400";
