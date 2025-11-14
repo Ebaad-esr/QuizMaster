@@ -56,6 +56,7 @@
                 <p class="text-sm text-gray-500">Join Code</p>
                 <p id="join-code-display" class="text-3xl font-bold text-blue-600">-</p>
             </div>
+
             <div class="bg-white p-6 rounded-lg shadow-md text-center">
                 <p class="text-sm text-gray-500">Connected Players</p>
                 <p id="players-display" class="text-3xl font-bold">0</p>
@@ -65,6 +66,7 @@
                 <p id="questions-count-display" class="text-3xl font-bold">0</p>
             </div>
         </div>
+
         <div class="bg-white p-6 rounded-lg shadow-md mb-8">
             <h2 class="text-2xl font-bold mb-4">Quiz Controls</h2>
             <div class="flex flex-wrap gap-4">
@@ -82,7 +84,9 @@
                     <input name="correctOptionIndex" type="number" min="0" placeholder="Correct Index (0-based)" class="p-2 border rounded w-full" required>
                     <input name="timeLimit" type="number" min="1" placeholder="Time Limit (s)" class="p-2 border rounded w-full" value="30">
                     <input name="score" type="number" min="0" placeholder="Score" class="p-2 border rounded w-full" value="10">
-                    <input name.="negativeScore" type="number" min="0" placeholder="Negative Score" class="p-2 border rounded w-full" value="0">
+                    
+                    <input name="negativeScore" type="number" min="0" placeholder="Negative Score" class="p-2 border rounded w-full" value="0">
+                    
                     <input name="questionImage" type="file" accept="image/*" class="p-2 border rounded w-full md:col-span-2">
                 </div>
                 <button type="submit" class="mt-4 bg-blue-600 text-white px-5 py-2 rounded font-semibold">Add Question</button>
