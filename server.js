@@ -120,7 +120,9 @@ function getHostDb(hostId) {
 }
 
 // --- IN-MEMORY STATE ---
-let quizState = { status: 'waiting', hostId: null, quizId: null, quizName: '', questions: [], joinCode: null };
+// ** THIS IS THE FIX **
+// Changed status from 'waiting' to 'finished' to allow the first quiz to start.
+let quizState = { status: 'finished', hostId: null, quizId: null, quizName: '', questions: [], joinCode: null };
 const players = new Map();
 
 // --- SERVER SETUP ---
