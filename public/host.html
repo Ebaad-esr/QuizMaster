@@ -5,29 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuizCraft Host</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>body { font-family: 'Inter', sans-serif; } .hide { display: none; }</style>
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-gray-100">
     <div class="min-h-screen flex items-center justify-center">
         <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-sm border-t-4 border-yellow-500">
-            <div class="flex justify-center mb-6 border-b">
-                <button id="tab-login" class="px-4 py-2 font-bold border-b-2 border-yellow-500 text-black">Login</button>
-                <button id="tab-register" class="px-4 py-2 font-bold text-gray-500 hover:text-black">Register</button>
-            </div>
-
             <form id="login-form">
-                <h2 class="text-2xl font-bold mb-6 text-center">Welcome Back</h2>
+                <h2 class="text-2xl font-bold mb-6 text-center">Host Login</h2>
                 <input id="email-input" type="email" placeholder="Email" class="w-full p-3 border rounded mb-4" required>
                 <input id="password-input" type="password" placeholder="Password" class="w-full p-3 border rounded mb-4" required>
                 <button type="submit" class="w-full bg-black text-white p-3 rounded font-bold hover:bg-gray-800">Login</button>
-            </form>
-
-            <form id="register-form" class="hide">
-                <h2 class="text-2xl font-bold mb-6 text-center">Create Account</h2>
-                <input id="reg-email" type="email" placeholder="Email" class="w-full p-3 border rounded mb-4" required>
-                <input id="reg-pass" type="password" placeholder="Password" class="w-full p-3 border rounded mb-4" required>
-                <input id="reg-confirm" type="password" placeholder="Confirm Password" class="w-full p-3 border rounded mb-4" required>
-                <button type="submit" class="w-full bg-yellow-500 text-black p-3 rounded font-bold hover:bg-yellow-600">Register</button>
             </form>
 
             <div class="text-center mt-4"><a href="/" class="text-yellow-600 hover:underline">← Back to Lobby</a></div>
