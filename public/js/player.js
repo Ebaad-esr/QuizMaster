@@ -48,6 +48,7 @@ socket.on("question", ({ question, index }) => {
     clearInterval(timerInterval);
     let timeLeft = question.timeLimit;
     ui.timerDisplay.textContent = `${timeLeft}s`;
+    
     timerInterval = setInterval(() => {
         timeLeft--;
         ui.timerDisplay.textContent = `${timeLeft}s`;
@@ -73,8 +74,9 @@ socket.on("answerResult", ({ isCorrect, scoreChange, correctOptionIndex, selecte
 });
 
 socket.on("quizFinished", ({ score }) => { ui.finalScore.textContent = score; showPage("finished-page"); });
+
 function submitAnswer(optionIndex) {
-    clearInterval(timerInterval);
+    // Timer logic removed from here so it keeps running
     ui.optionsContainer.querySelectorAll("button").forEach(btn => btn.disabled = true);
     socket.emit("submitAnswer", { optionIndex });
 }
