@@ -1,6 +1,6 @@
 /*
 ================================================================================
-  QuizCraft Server - Unified Node.js File
+  QuizCraft Server - Production Ready
 ================================================================================
 */
 
@@ -13,28 +13,33 @@ const multer = require('multer');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 
+// --- GOOGLE AUTH SETUP ---
+const { OAuth2Client } = require('google-auth-library');
+// REPLACE WITH YOUR ACTUAL CLIENT ID IF DIFFERENT
+const GOOGLE_CLIENT_ID = "940602400844-sio5kjileikdatta0n4e5b93uc30s2gh.apps.googleusercontent.com";
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = '3gbup38id9'; // Super Admin password
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '3gbup38id9'; // Use Env var in production if possible
 const SALT_ROUNDS = 10;
 
-// --- DIRECTORY SETUP ---
-const isRender = process.env.RENDER_DISK_MOUNT_PATH;
-const dataPath = isRender ? process.env.RENDER_DISK_MOUNT_PATH : __dirname;
+// --- DIRECTORY SETUP (UPDATED FOR RAILWAY) ---
+// Railway Volume mount path usually defaults to /app/data or user defined
+const RAILWAY_MOUNT = process.env.RAILWAY_VOLUME_MOUNT_PATH; 
+const RENDER_MOUNT = process.env.RENDER_DISK_MOUNT_PATH;
+
+// If on Railway or Render, use the mount path. Otherwise local.
+const dataPath = RAILWAY_MOUNT || RENDER_MOUNT || __dirname;
 
 const publicDir = path.join(__dirname, 'public');
 const uploadsDir = path.join(dataPath, 'uploads');
 const dbDir = path.join(dataPath, 'databases');
 
-if (isRender) {
-    [uploadsDir, dbDir].forEach(dir => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    });
-} else {
-    [publicDir, uploadsDir, dbDir].forEach(dir => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    });
-}
+// Ensure directories exist
+[uploadsDir, dbDir].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
 
 // --- FILE UPLOAD SETUP ---
 const storage = multer.diskStorage({
@@ -60,7 +65,7 @@ function getHostDb(hostId) {
     const host = masterDb.prepare('SELECT db_path FROM hosts WHERE id = ?').get(hostId);
     if (!host) throw new Error('Host not found');
     
-    const dbPath = path.join(__dirname, host.db_path);
+    const dbPath = path.join(dataPath, path.basename(host.db_path)); // Ensure we look in dataPath
     const hostDb = new Database(dbPath);
     hostDb.pragma('foreign_keys = ON');
     hostDb.exec(`
@@ -95,6 +100,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // --- EXPRESS ROUTES ---
 app.use(express.static(publicDir));
+// Serve uploaded images from the persistent path
+app.use('/uploads', express.static(uploadsDir)); 
+
 app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 app.get('/player', (req, res) => res.sendFile(path.join(publicDir, 'player.html')));
 app.get('/admin', (req, res) => res.sendFile(path.join(publicDir, 'admin.html')));
@@ -130,12 +138,12 @@ app.post('/api/admin/add-host', superAdminAuth, (req, res) => {
 app.post('/api/admin/delete-host', superAdminAuth, (req, res) => {
     const host = masterDb.prepare('SELECT * FROM hosts WHERE id = ?').get(req.body.hostId);
     if (host) {
-        fs.unlink(path.join(__dirname, host.db_path), (err) => {});
+        const dbPath = path.join(dataPath, path.basename(host.db_path));
+        if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
         masterDb.prepare('DELETE FROM hosts WHERE id = ?').run(req.body.hostId);
     }
     res.json({ success: true });
 });
-// ** NEW: Update Host Password **
 app.post('/api/admin/update-host-password', superAdminAuth, (req, res) => {
     try {
         const { hostId, newPassword } = req.body;
@@ -163,7 +171,6 @@ app.post('/api/host/login', (req, res) => {
     if (host && bcrypt.compareSync(password, host.password)) res.json({ success: true, token: host.id });
     else res.json({ success: false, message: 'Invalid credentials' });
 });
-// ** NEW: Host Registration (Public) **
 app.post('/api/host/register', (req, res) => {
     try {
         const { email, password } = req.body;
@@ -174,6 +181,33 @@ app.post('/api/host/register', (req, res) => {
         getHostDb(info.lastInsertRowid);
         res.json({ success: true, token: info.lastInsertRowid });
     } catch (e) { res.status(500).json({ success: false, message: 'Email already exists.' }); }
+});
+
+// ** GOOGLE LOGIN **
+app.post('/api/host/google-login', async (req, res) => {
+    try {
+        const { token } = req.body;
+        const ticket = await googleClient.verifyIdToken({
+            idToken: token,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const email = payload.email;
+
+        let host = masterDb.prepare('SELECT * FROM hosts WHERE email = ?').get(email);
+
+        if (!host) {
+            const dummyPassword = bcrypt.hashSync("GOOGLE_AUTH_USER_" + Date.now(), SALT_ROUNDS);
+            const info = masterDb.prepare('INSERT INTO hosts (email, password, db_path) VALUES (?, ?, ?)')
+                .run(email, dummyPassword, `databases/host_${Date.now()}.db`);
+            getHostDb(info.lastInsertRowid);
+            host = { id: info.lastInsertRowid };
+        }
+        res.json({ success: true, token: host.id });
+    } catch (e) {
+        console.error(e);
+        res.json({ success: false, message: 'Google authentication failed' });
+    }
 });
 
 app.post('/api/host/quizzes', hostAuthMiddleware, (req, res) => {
@@ -208,18 +242,12 @@ app.post('/api/host/add-question', hostAuthMiddleware, upload.single('questionIm
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
-// ** NEW: Edit Question Endpoint **
 app.post('/api/host/edit-question', hostAuthMiddleware, upload.single('questionImage'), (req, res) => {
     try {
         const { questionId, text, options, correctOptionIndex, timeLimit, score, negativeScore } = req.body;
         const parsedOptions = options.split(',').map(s => s.trim());
-        
-        // Logic to handle image update: if new image provided, use it; otherwise keep old one
         let imageUrl = undefined;
-        if (req.file) {
-            imageUrl = `/uploads/${req.file.filename}`;
-            // Optional: Delete old image here if desired
-        }
+        if (req.file) imageUrl = `/uploads/${req.file.filename}`;
 
         if (imageUrl) {
             req.db.prepare('UPDATE questions SET text=?, options=?, correctOptionIndex=?, timeLimit=?, score=?, negativeScore=?, imageUrl=? WHERE id=?')
@@ -231,11 +259,10 @@ app.post('/api/host/edit-question', hostAuthMiddleware, upload.single('questionI
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
-
 app.post('/api/host/delete-question', hostAuthMiddleware, (req, res) => {
     const question = req.db.prepare('SELECT imageUrl FROM questions WHERE id = ?').get(req.body.id);
     if (question && question.imageUrl) {
-        const imagePath = path.join(__dirname, 'public', question.imageUrl);
+        const imagePath = path.join(uploadsDir, path.basename(question.imageUrl)); // Use uploadsDir
         if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
     }
     req.db.prepare('DELETE FROM questions WHERE id = ?').run(req.body.id);
