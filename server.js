@@ -1,6 +1,6 @@
 /*
 ================================================================================
-  QuizCraft Server - Production Ready
+  QuizCraft Server - Production Ready (Final Logic)
 ================================================================================
 */
 
@@ -234,13 +234,40 @@ app.post('/api/host/start-quiz', hostAuthMiddleware, (req, res) => {
     io.emit('leaderboardUpdate', { results: [], quizName: quiz.name });
     res.json({ success: true });
 });
+
+// ** FIXED: LAUNCH QUIZ WITH AUTO-RECOVERY **
 app.post('/api/host/launch-quiz', hostAuthMiddleware, (req, res) => {
-    if (quizState.status !== 'waiting' || quizState.hostId !== req.hostId) return res.json({ success: false, message: 'Quiz is not in a waiting lobby.'});
+    let targetQuizId = quizState.quizId;
+
+    // RECOVERY: If server memory is 'finished' but host is sending a valid quizId
+    if (quizState.status === 'finished' && req.body.quizId) {
+        const dbQuiz = req.db.prepare('SELECT status, name, join_code FROM quizzes WHERE id = ?').get(req.body.quizId);
+        
+        // If the DB says it's waiting, restore the state!
+        if (dbQuiz && dbQuiz.status === 'waiting') {
+            const questions = req.db.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY id ASC').all(req.body.quizId);
+            quizState = { 
+                status: 'waiting', 
+                hostId: req.hostId, 
+                quizId: req.body.quizId, 
+                quizName: dbQuiz.name, 
+                joinCode: dbQuiz.join_code, 
+                questions: questions 
+            };
+            targetQuizId = req.body.quizId;
+        }
+    }
+
+    if (quizState.status !== 'waiting' || quizState.hostId !== req.hostId) {
+        return res.json({ success: false, message: 'Quiz is not in a waiting lobby.'});
+    }
+
     quizState.status = 'active';
-    req.db.prepare("UPDATE quizzes SET status = 'active' WHERE id = ?").run(quizState.quizId);
+    req.db.prepare("UPDATE quizzes SET status = 'active' WHERE id = ?").run(targetQuizId);
     io.emit('quizStarted', { quizName: quizState.quizName });
     res.json({ success: true });
 });
+
 app.post('/api/host/end-quiz', hostAuthMiddleware, (req, res) => {
     if ((quizState.status !== 'active' && quizState.status !== 'waiting') || quizState.hostId !== req.hostId) return res.json({ success: false, message: 'No quiz active/waiting.'});
     endQuiz();
@@ -313,10 +340,6 @@ io.on('connection', (socket) => {
         const question = quizState.questions[player.questionIndex];
         if (player.answers[question.id] !== undefined) return;
         
-        // ** UPDATED SCORING LOGIC **
-        // Correct = +Score
-        // Wrong = -NegativeScore
-        // Timeout (null) = 0 (No Penalty)
         let scoreChange = 0;
         if (optionIndex === question.correctOptionIndex) {
             scoreChange = question.score;
