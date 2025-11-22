@@ -313,7 +313,19 @@ io.on('connection', (socket) => {
         const question = quizState.questions[player.questionIndex];
         if (player.answers[question.id] !== undefined) return;
         
-        let scoreChange = (optionIndex === question.correctOptionIndex) ? question.score : (optionIndex === null ? -question.negativeScore : -question.negativeScore);
+        // ** UPDATED SCORING LOGIC **
+        // Correct = +Score
+        // Wrong = -NegativeScore
+        // Timeout (null) = 0 (No Penalty)
+        let scoreChange = 0;
+        if (optionIndex === question.correctOptionIndex) {
+            scoreChange = question.score;
+        } else if (optionIndex !== null) {
+            scoreChange = -question.negativeScore;
+        } else {
+            scoreChange = 0; // Timeout = No Change
+        }
+
         player.score += scoreChange;
         player.answers[question.id] = optionIndex;
         socket.emit('answerResult', { isCorrect: optionIndex === question.correctOptionIndex, scoreChange, correctOptionIndex: question.correctOptionIndex, selectedOptionIndex: optionIndex, score: player.score });
