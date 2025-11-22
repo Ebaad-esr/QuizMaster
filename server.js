@@ -103,7 +103,7 @@ app.get('/host', (req, res) => res.sendFile(path.join(publicDir, 'host.html')));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(publicDir, 'dashboard.html')));
 app.get('/leaderboard', (req, res) => res.sendFile(path.join(publicDir, 'leaderboard.html')));
 
-// --- API ROUTES (ABBREVIATED FOR CLARITY - SAME AS BEFORE) ---
+// --- ADMIN API ---
 const superAdminAuth = (req, res, next) => {
     if (req.headers.authorization !== ADMIN_PASSWORD) return res.status(403).json({ success: false, message: 'Forbidden' });
     next();
@@ -135,7 +135,18 @@ app.post('/api/admin/delete-host', superAdminAuth, (req, res) => {
     }
     res.json({ success: true });
 });
+// ** NEW: Update Host Password **
+app.post('/api/admin/update-host-password', superAdminAuth, (req, res) => {
+    try {
+        const { hostId, newPassword } = req.body;
+        if (!newPassword) return res.status(400).json({ success: false, message: 'Password required.' });
+        const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
+        masterDb.prepare('UPDATE hosts SET password = ? WHERE id = ?').run(hash, hostId);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
 
+// --- HOST API ---
 const hostAuthMiddleware = (req, res, next) => {
     try {
         const token = req.headers.authorization;
@@ -152,6 +163,19 @@ app.post('/api/host/login', (req, res) => {
     if (host && bcrypt.compareSync(password, host.password)) res.json({ success: true, token: host.id });
     else res.json({ success: false, message: 'Invalid credentials' });
 });
+// ** NEW: Host Registration (Public) **
+app.post('/api/host/register', (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required.' });
+        const hash = bcrypt.hashSync(password, SALT_ROUNDS);
+        const info = masterDb.prepare('INSERT INTO hosts (email, password, db_path) VALUES (?, ?, ?)')
+            .run(email, hash, `databases/host_${Date.now()}.db`);
+        getHostDb(info.lastInsertRowid);
+        res.json({ success: true, token: info.lastInsertRowid });
+    } catch (e) { res.status(500).json({ success: false, message: 'Email already exists.' }); }
+});
+
 app.post('/api/host/quizzes', hostAuthMiddleware, (req, res) => {
     const quizzes = req.db.prepare('SELECT * FROM quizzes ORDER BY id DESC').all();
     res.json({ success: true, quizzes });
@@ -184,6 +208,30 @@ app.post('/api/host/add-question', hostAuthMiddleware, upload.single('questionIm
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
+// ** NEW: Edit Question Endpoint **
+app.post('/api/host/edit-question', hostAuthMiddleware, upload.single('questionImage'), (req, res) => {
+    try {
+        const { questionId, text, options, correctOptionIndex, timeLimit, score, negativeScore } = req.body;
+        const parsedOptions = options.split(',').map(s => s.trim());
+        
+        // Logic to handle image update: if new image provided, use it; otherwise keep old one
+        let imageUrl = undefined;
+        if (req.file) {
+            imageUrl = `/uploads/${req.file.filename}`;
+            // Optional: Delete old image here if desired
+        }
+
+        if (imageUrl) {
+            req.db.prepare('UPDATE questions SET text=?, options=?, correctOptionIndex=?, timeLimit=?, score=?, negativeScore=?, imageUrl=? WHERE id=?')
+                .run(text, JSON.stringify(parsedOptions), correctOptionIndex, timeLimit, score, negativeScore, imageUrl, questionId);
+        } else {
+            req.db.prepare('UPDATE questions SET text=?, options=?, correctOptionIndex=?, timeLimit=?, score=?, negativeScore=? WHERE id=?')
+                .run(text, JSON.stringify(parsedOptions), correctOptionIndex, timeLimit, score, negativeScore, questionId);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
 app.post('/api/host/delete-question', hostAuthMiddleware, (req, res) => {
     const question = req.db.prepare('SELECT imageUrl FROM questions WHERE id = ?').get(req.body.id);
     if (question && question.imageUrl) {
