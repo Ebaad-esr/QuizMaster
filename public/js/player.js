@@ -37,11 +37,10 @@ document.getElementById("join-form").addEventListener("submit", e => {
     e.preventDefault();
     const name = document.getElementById("name-input").value.trim();
     const joinCode = document.getElementById("joincode-input").value.trim().toUpperCase();
-    const branch = document.getElementById("branch-input").value.trim();
-    const year = document.getElementById("year-input").value.trim();
+
     
     if (name && joinCode) {
-        socket.emit("join", { name, branch, year, joinCode });
+        socket.emit("join", { name, joinCode });
     }
 });
 
@@ -157,3 +156,4 @@ function submitAnswer(optionIndex) {
     ui.optionsContainer.querySelectorAll("button").forEach(btn => btn.disabled = true);
     socket.emit("submitAnswer", { optionIndex });
 }
+
