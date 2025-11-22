@@ -18,7 +18,7 @@ async function refreshHosts() {
 }
 async function deleteHost(id) { if (confirm("Delete host?")) if ((await api("delete-host", { hostId: id })).success) refreshHosts(); }
 
-// ** NEW: Change Password Logic **
+// ** Change Password Logic **
 window.changePass = async (id) => {
     const newPass = prompt("Enter new password for this host:");
     if (newPass) {
