@@ -45,7 +45,10 @@ async function refreshQuizDetail() {
         ui.statusDisplay.textContent = status === 'waiting' ? 'Waiting (In Lobby)' : status.charAt(0).toUpperCase() + status.slice(1);
         ui.playersDisplay.textContent = playerCount; ui.questionsCount.textContent = questions.length;
         ui.joinCodeDisplay.textContent = joinCode || "-";
-        ui.startBtn.disabled = status !== 'finished'; ui.launchBtn.disabled = status !== 'waiting'; ui.endBtn.disabled = status === 'finished';
+        ui.startBtn.disabled = (status === 'waiting' || status === 'active');
+        ui.launchBtn.disabled = (status !== 'waiting');
+        ui.endBtn.disabled = (status === 'finished');
+        
         ui.questionsTable.innerHTML = questions.map(q => `
             <tr class="border-b">
                 <td class="p-3">#${q.id}</td>
